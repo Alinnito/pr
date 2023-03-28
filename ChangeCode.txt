@@ -1,0 +1,411 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Configuration;
+
+
+
+namespace Code_for_debugging
+{
+    public class ChangeCode
+    {
+        string Dirpath = ConfigurationManager.AppSettings["Path"];
+        string word = "create proc";
+
+        public List<string> LstPath = new List<string>();
+        public string[] ArrDirectories;
+
+        public ChangeCode()
+        {
+            ArrDirectories = Directory.GetDirectories(Dirpath);
+        }
+
+        public void Start(string dir)
+        {
+            DirSearch(Dirpath + @"\" + dir);
+        }
+
+        public void DirSearch(string sDir)
+        {
+            LstPath.Clear();
+            try
+            {
+                foreach (string d in Directory.GetDirectories(sDir))
+                {
+                    foreach (string f in Directory.GetFiles(d))
+                    {
+                        using (StreamReader file = new StreamReader(f, Encoding.Default))
+                        {
+                            String line;
+                            while ((line = file.ReadLine()) != null)
+                            {
+                                if (line.ToLower().Contains(word))
+                                {
+                                    LstPath.Add(f);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    DirSearch(d);
+                }
+                foreach (string f in Directory.GetFiles(sDir))
+                {
+                    using (StreamReader file = new StreamReader(f, Encoding.Default))
+                    {
+                        String line;
+                        while ((line = file.ReadLine()) != null)
+                        {
+                            if (line.ToLower().Contains(word))
+                            {
+                                LstPath.Add(f);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception excpt)
+            {
+                Console.WriteLine(excpt.Message);
+            }
+        }
+    }
+
+    public class Procedure
+    {
+        public int id { get; set; }
+        public string Name { get; set; }
+        public bool IsChecked { get; set; }
+
+
+        List<string> ProcText = new List<string>();
+        List<string> NewCode = new List<string>();
+        List<KeyValuePair<string, string>> TablesLst = new List<KeyValuePair<string, string>>();
+
+        Regex regex = new Regex(@"exec\s\[?1\]?.\[?log\]?.", RegexOptions.IgnoreCase);
+        Regex regexInsert = new Regex(@"insert\s+into\s+[^@#]", RegexOptions.IgnoreCase);
+
+        public string GetPath(string name)
+        {
+            string[] allFoundFiles = Directory.GetFiles(@"C:\Users\spa-a\OneDrive\Рабочий стол\Git\", name, SearchOption.AllDirectories);
+            string f = "";
+            foreach (string file in allFoundFiles)
+            {
+                f = file;
+                break;
+            }
+            return f;
+        }
+
+        public int BeginCommLog(int StrId)
+        {
+            NewCode.Add("declare @messageStr nvarchar(255)");
+            NewCode.Add("set @messageStr = convert(nvarchar(10), getdate(), 8) + ' Начало '");
+            NewCode.Add("RAISERROR(@messageStr, 0, 1) WITH NOWAIT; /*");
+            while (StrId < ProcText.Count - 1 && !Regex.IsMatch(ProcText[StrId], @"exec\s\[?1\]?.\[?log\]?.\[?begin\]?", RegexOptions.IgnoreCase)) //Начало логирования
+            {
+                StrId++;
+                NewCode.Add(ProcText[StrId]);
+            }
+            NewCode.Add(@"*/");
+
+            return StrId;
+        }
+
+        public void EndCommLog(int StrId)
+        {
+            NewCode.Add("/*");
+            while (StrId < ProcText.Count-1)
+            {
+                NewCode.Add(ProcText[StrId]);  //Конец логирования 
+                StrId++;
+            }
+            NewCode.Add("*/");
+            NewCode.Add("set @messageStr = convert(nvarchar(10), getdate(), 8) + ' Конец '");
+            NewCode.Add("RAISERROR(@messageStr, 0, 1) WITH NOWAIT;");
+        }
+
+        public int CommLog(int i)
+        {
+            while (i < ProcText.Count - 1 && !ProcText[i].ToLower().Contains("@message"))
+            {
+                NewCode.Add(ProcText[i]);
+                i++;
+            }
+            NewCode.Add(ProcText[i] + @"*/");
+            string[] strlist = ProcText[i].Split('\'');
+            string rCount = "";
+            if (i < ProcText.Count - 1 && ProcText[i + 1].ToLower().Contains("@rowcount"))
+            {
+                i++;
+                NewCode.Add("--" + ProcText[i]);
+                rCount = " + cast(@@rowcount as nvarchar(10))";
+            }
+            NewCode.Add("set  @messageStr = convert(nvarchar(10), getdate(), 8) + ' " + strlist[1] + " ' " + rCount);
+            NewCode.Add("RAISERROR(@messageStr, 0, 1) WITH NOWAIT;");
+
+            return i;
+        }
+
+        public int CommProcLog(int i)
+        {
+            NewCode.Add("/*" + ProcText[i]);
+            i++;
+            while (Regex.IsMatch(ProcText[i].Trim(), @"^@", RegexOptions.IgnoreCase))
+            {
+                NewCode.Add(ProcText[i]);
+                i++;
+            }
+            NewCode.Add(ProcText[i - 1] + "*/");
+
+            return i;
+        }
+
+        public int CommProc(int i)
+        {
+            for (; i < ProcText.Count; i++)
+            {
+                if (regexInsert.IsMatch(ProcText[i]))
+                {
+                    CreateTable(i);
+                    i++;
+                }
+                while (i < ProcText.Count - 1 && !ProcText[i].ToLower().Contains("exec"))
+                {
+                    NewCode.Add(ProcText[i]);
+                    i++;
+                    if (regexInsert.IsMatch(ProcText[i]))
+                    {
+                        CreateTable(i);
+                        i++;
+                    }
+                }
+                if (i >= ProcText.Count)
+                    break;
+                NewCode.Add("/*" + ProcText[i]);
+                i++;
+                while (i < ProcText.Count - 1 && Regex.IsMatch(ProcText[i].Trim(), @"^@", RegexOptions.IgnoreCase))
+                {
+                    NewCode.Add(ProcText[i]);
+                    i++;
+                }
+                NewCode.Add("*/");
+                NewCode.Add(ProcText[i]);
+            }
+
+            return i;
+        }
+
+        public void Change(string path, bool CommExec)
+        {
+            ReadFile(path);
+
+            int i = CommCreate();
+
+            if (IsLog())
+            {
+                i = BeginCommLog(i) + 1; //после начала логирования
+                for (; i < ProcText.Count - 1; i++)
+                {
+                    while (i < ProcText.Count - 1 && !ProcText[i].ToLower().Contains("exec") && !regexInsert.IsMatch(ProcText[i]))
+                    {
+                        NewCode.Add(ProcText[i]);
+                        i++;
+                    }
+                    if (regexInsert.IsMatch(ProcText[i]))
+                    {
+                        CreateTable(i);
+                        i++;
+                    }
+
+                    if (regex.IsMatch(ProcText[i])) //Логирование
+                    {
+                        if (ProcText[i].ToLower().Contains("finilize"))
+                        {
+                            EndCommLog(i);
+                            break;
+                        }
+                        ProcText[i] = "/*" + ProcText[i];
+                        i = CommLog(i);
+                    }
+                    else if (CommExec) //Комментирование процедур
+                    {
+                        i = CommProcLog(i);
+                    }
+                    else
+                        NewCode.Add(ProcText[i]);
+                }
+            }
+            else if (CommExec)
+            {
+                i = CommProc(i++);
+            }
+            else
+            {
+                i++;
+                for (; i < ProcText.Count; i++)
+                {
+                    if (regexInsert.IsMatch(ProcText[i]))
+                    {
+                        CreateTable(i);
+                        i++;
+                    }
+                    NewCode.Add(ProcText[i]);
+                }
+            }
+
+            //SaveFile(path);
+        }
+
+        public void ReadFile(string path) //Чтение из файла
+        {
+            string line;
+
+            using (StreamReader sr = new StreamReader(path))
+            {
+                while ((line = sr.ReadLine()) != null)
+                {
+                    ProcText.Add(line);
+                }
+            }
+        }
+
+        public bool IsLog()
+        {
+            foreach (string str in ProcText)
+            {
+                if (regex.IsMatch(str))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public int CommCreate()
+        {
+            int i = 0;
+            while (!ProcText[i].ToLower().Contains("create proc")) //create proc
+            {
+                NewCode.Add(ProcText[i]);
+                i++;
+            }
+
+            NewCode.Add("--" + ProcText[i]);
+            i++;
+            while (!ProcText[i].ToLower().Contains("as") && !ProcText[i].Contains("@"))
+            {
+                NewCode.Add(ProcText[i]);
+                i++;
+            }
+
+            if (ProcText[i].Contains("@"))
+            {
+                NewCode.Add("DECLARE");             //DECLARE
+                NewCode.Add(ProcText[i]);
+                i++;
+                while (!Regex.IsMatch(ProcText[i], @"as", RegexOptions.IgnoreCase))
+                {
+                    NewCode.Add(ProcText[i]);
+                    i++;
+                }
+            }
+            NewCode.Add("--" + ProcText[i]); //as
+            return i;
+        }
+
+        public void CreateTable(int i)
+        {
+            NewCode.Add("--" + ProcText[i]);
+
+            string str = ProcText[i].Replace("[", "").Replace("]", "");
+            string[] strlist = str.Trim().Split(' ');
+            string TabName = strlist[2];
+
+            if (strlist[2].Contains("."))
+            {
+                int punctId = strlist[2].IndexOf(".");
+                TabName = strlist[2].Substring(punctId + 1);
+                FindTab(TabName, strlist[2].Substring(0, punctId));
+            }
+            else
+                FindTab(TabName);
+
+            NewCode.Add(str.Replace(strlist[2], "").Replace("into ", "into #" + TabName));
+        }
+
+        public void FindTab(string TabName, string schema = null)
+        {
+            KeyValuePair<string, string> pair = new KeyValuePair<string, string>(schema, TabName);
+
+            if (!TablesLst.Contains(pair))
+            {
+                string p = ConfigurationManager.AppSettings["Path"];
+                string[] allFoundFiles;
+                if (schema == null)
+                {
+                    allFoundFiles = Directory.GetFiles(p, string.Format("*.{0}.sql", TabName), SearchOption.AllDirectories);
+                    if (allFoundFiles.Length == 0)
+                        allFoundFiles = Directory.GetFiles(p, string.Format("*.[{0}].sql", TabName), SearchOption.AllDirectories);
+                }
+                else
+                {
+                    allFoundFiles = Directory.GetFiles(p, string.Format("{0}.{1}.sql", schema, TabName), SearchOption.AllDirectories);
+                    if (allFoundFiles.Length == 0)
+                        allFoundFiles = Directory.GetFiles(p, string.Format("[{0}].[{1}].sql", schema, TabName), SearchOption.AllDirectories);
+                    if (allFoundFiles.Length == 0)
+                        allFoundFiles = Directory.GetFiles(p, string.Format("*{0}*.*{1}*.sql", schema, TabName), SearchOption.AllDirectories);
+                }
+                NewCode.Add("drop table if exists #" + TabName + ";");
+                NewCode.Add("create table #" + TabName + "(");
+                string line;
+
+                try
+                {
+
+                    using (StreamReader sr = new StreamReader(allFoundFiles[0], Encoding.Default))
+                    {
+                        while ((line = sr.ReadLine()) != null)
+                        {
+                            if (line.ToLower().Contains("create table"))
+                            {
+                                while ((line = sr.ReadLine()) != null && !new Regex(@"^\) ON \[", RegexOptions.IgnoreCase).IsMatch(line))
+                                    NewCode.Add(line);
+
+                                if (new Regex(@"^\) ON \[", RegexOptions.IgnoreCase).IsMatch(line))
+                                {
+                                    NewCode.Add(")");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    TablesLst.Add(pair);
+                }
+                catch
+                {
+                    throw new Exception("Таблица " + schema + "." + TabName + " не найдена");
+                }
+            }
+        }
+
+        public void SaveFile(string path)
+        {
+            //Запись в файл
+            using (StreamWriter sw = new StreamWriter(path, false)) //path
+            {
+                for (int j = 0; j < NewCode.Count; j++)
+                {
+                    sw.WriteLine(NewCode[j]);
+                }
+            }
+
+        }
+
+    }
+}

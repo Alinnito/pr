@@ -1,0 +1,123 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
+using System.Windows.Shapes;
+
+
+namespace Code_for_debugging
+{
+    /// <summary>
+    /// Логика взаимодействия для MainWindow.xaml
+    /// </summary>
+    public partial class MainWindow : Window
+    {
+        ChangeCode cc = new ChangeCode();
+        List<Procedure> items = new List<Procedure>();
+
+        public MainWindow()
+        {
+            InitializeComponent();
+            lst.ItemsSource = items;
+
+            foreach (string dir in cc.ArrDirectories)
+                CBDirs.Items.Add(System.IO.Path.GetFileName(dir));
+        }
+
+        private void Button_Click(object sender, RoutedEventArgs e)
+        {
+            if ((lst.ItemsSource as List<Procedure>).Where(myObj => myObj.IsChecked).Count() == 0)
+                MessageBox.Show("Выберите файл");
+            else if (BuffObj.IsChecked == true && (lst.ItemsSource as List<Procedure>).Where(myObj => myObj.IsChecked).Count() > 1)
+                MessageBox.Show("Для замены буферных объектов на постоянные укажите только одну процедуру");
+            else if (BuffObj.IsChecked == true && string.IsNullOrEmpty(tbObj.Text))
+                MessageBox.Show("Укажите имя постоянного объекта");
+            else
+            {
+                try
+                {
+                    if (BuffObj.IsChecked == true)
+                    {
+                        Procedure proc = new Procedure();
+                        string path = proc.GetPath(tbObj.Text.Trim());
+                        proc.Change(path, CommProc.IsChecked == true);
+                        var tObj = (lst.ItemsSource as List<Procedure>).Where(myObj => myObj.IsChecked);
+                        string pathToSave = "";
+                        List<Procedure> items = lst.ItemsSource as List<Procedure>;
+                        foreach (var item in items)
+                            if (item.IsChecked)
+                                pathToSave = cc.LstPath[item.id];
+
+                        proc.SaveFile(pathToSave);
+                    }
+                    else
+                    {
+                        foreach (var tObj in (lst.ItemsSource as List<Procedure>).Where(myObj => myObj.IsChecked))
+                        {
+                            //Изменение кода
+                            string path = cc.LstPath[tObj.id];
+                            Procedure proc = new Procedure();
+                            proc.Change(path, CommProc.IsChecked == true);
+                            proc.SaveFile(path);
+                        }
+                    }
+                    MessageBox.Show("Успешно");
+
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(ex.Message);
+                }
+            }
+        }
+
+        private void CBDirs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            items.Clear();
+            try
+            {
+                cc.Start(CBDirs.SelectedItem.ToString());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message);
+            }
+
+            for (int i = 0; i < cc.LstPath.Count(); i++)
+                items.Add(new Procedure() { id = i, Name = System.IO.Path.GetFileName(cc.LstPath[i]) });
+            lst.Items.Refresh();
+        }
+
+        private void BuffObj_Click(object sender, RoutedEventArgs e)
+        {
+            if (BuffObj.IsChecked == true)
+            {
+                tbObj.IsEnabled = true;
+                tbObj.Text = "Введите постоянный объект";
+            }
+            else
+            {
+                tbObj.IsEnabled = false;
+                tbObj.Text = "";
+            }
+        }
+
+        private void tbObj_GotFocus(object sender, RoutedEventArgs e)
+        {
+            if (tbObj.IsEnabled == true && tbObj.Text.Contains("Введите постоянный объект"))
+            {
+                tbObj.Text = "";
+            }
+        }
+    }
+}
